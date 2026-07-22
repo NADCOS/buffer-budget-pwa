@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Category } from "@/lib/types";
 import { firstOfMonth } from "@/lib/budget";
 
-const CURRENCIES = ["USD", "EUR", "GBP", "PHP", "JPY", "AUD", "CAD"];
+const CURRENCIES = ["USD", "EUR", "GBP", "PHP", "JPY", "AUD", "CAD", "SAR"];
 
 export default function SettingsPage() {
   const supabase = useMemo(() => createClient(), []);
