@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Plus, TrendingUp, TrendingDown, Landmark, Wifi, WifiOff } from "lucide-react";
+import Link from "next/link";
+import { Plus, TrendingUp, TrendingDown, Landmark, Wifi, WifiOff, Settings } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
 import {
@@ -143,13 +144,22 @@ export default function Dashboard() {
           <p className="text-sm text-neutral-400">Current balance</p>
           <p className="text-3xl font-bold tabular-nums">{fmt(summary.balance)}</p>
         </div>
-        <div
-          className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${
-            online ? "bg-neutral-900 text-neutral-400" : "bg-amber-500/15 text-amber-300"
-          }`}
-        >
-          {online ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-          {online ? "Synced" : "Offline"}
+        <div className="flex items-center gap-2">
+          <div
+            className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${
+              online ? "bg-neutral-900 text-neutral-400" : "bg-amber-500/15 text-amber-300"
+            }`}
+          >
+            {online ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+            {online ? "Synced" : "Offline"}
+          </div>
+          <Link
+            href="/settings"
+            aria-label="Settings"
+            className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-neutral-400"
+          >
+            <Settings className="h-4.5 w-4.5" />
+          </Link>
         </div>
       </header>
 
