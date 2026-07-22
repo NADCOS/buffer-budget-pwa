@@ -10,13 +10,28 @@ interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onSubmit: (t: Omit<Transaction, "id" | "user_id">) => void;
+  currency?: string;
 }
 
-export function QuickAddModal({ open, onOpenChange, onSubmit }: Props) {
+function currencySymbol(currency: string): string {
+  try {
+    const parts = new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      maximumFractionDigits: 0,
+    }).formatToParts(0);
+    return parts.find((p) => p.type === "currency")?.value ?? currency;
+  } catch {
+    return currency;
+  }
+}
+
+export function QuickAddModal({ open, onOpenChange, onSubmit, currency = "USD" }: Props) {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<Category>("Food");
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const symbol = currencySymbol(currency);
 
   function reset() {
     setAmount("");
@@ -61,7 +76,7 @@ export function QuickAddModal({ open, onOpenChange, onSubmit }: Props) {
             {/* Amount */}
             <div className="mb-5 text-center">
               <div className="flex items-center justify-center gap-1">
-                <span className="text-3xl font-semibold text-neutral-500">$</span>
+                <span className="text-3xl font-semibold text-neutral-500">{symbol}</span>
                 <input
                   autoFocus
                   type="number"
