@@ -28,33 +28,76 @@ export default function Dashboard() {
 
   const month = firstOfMonth();
 
-  // ── Initial load ──────────────────────────────────────────
-  useEffect(() => {
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      setUserId(user.id);
+  // ── Load everything (re-runnable for realtime + refocus) ──
+  const load = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    setUserId(user.id);
 
-      const [{ data: profile }, { data: b }, { data: t }] = await Promise.all([
-        supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
-        supabase.from("budgets").select("*").eq("user_id", user.id),
-        supabase
-          .from("transactions")
-          .select("*")
-          .eq("user_id", user.id)
-          .order("occurred_on", { ascending: false }),
-      ]);
+    const [{ data: profile }, { data: b }, { data: t }] = await Promise.all([
+      supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
+      supabase.from("budgets").select("*").eq("user_id", user.id),
+      supabase
+        .from("transactions")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("occurred_on", { ascending: false }),
+    ]);
 
-      if (profile) {
-        setIncome(Number(profile.monthly_income));
-        setCurrency(profile.currency ?? "USD");
-      }
-      setBudgets((b as Budget[]) ?? []);
-      setTxns((t as Transaction[]) ?? []);
-    })();
+    if (profile) {
+      setIncome(Number(profile.monthly_income));
+      setCurrency(profile.currency ?? "USD");
+    }
+    setBudgets((b as Budget[]) ?? []);
+    setTxns((t as Transaction[]) ?? []);
   }, [supabase]);
+
+  // Initial load
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // ── Live cross-device sync ────────────────────────────────
+  useEffect(() => {
+    if (!userId) return;
+    const channel = supabase
+      .channel(`sync-${userId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "transactions", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "budgets", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "profiles", filter: `id=eq.${userId}` },
+        () => load(),
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, userId, load]);
+
+  // Refetch whenever the app regains focus (e.g. switch back from another device/tab)
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [load]);
 
   // ── Flush the offline outbox when the network returns ─────
   const flushOutbox = useCallback(async () => {
