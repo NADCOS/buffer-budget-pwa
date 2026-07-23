@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
-import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Transaction, type Credit, type Account, type SavingsEntry } from "@/lib/types";
+import { CATEGORIES, FIXED_CATEGORIES, SAVINGS_CURRENCY, type Budget, type Transaction, type Credit, type Account, type SavingsEntry } from "@/lib/types";
 import {
   computeSummary,
   firstOfMonth,
@@ -35,6 +35,9 @@ import { SafeToSpendGauge } from "@/components/SafeToSpendGauge";
 import { EnvelopeCard } from "@/components/EnvelopeCard";
 import { TransactionRow } from "@/components/TransactionRow";
 import { QuickAddModal, type TxnDraft } from "@/components/QuickAddModal";
+import { FxRateCard } from "@/components/FxRateCard";
+import { FlowChart } from "@/components/FlowChart";
+import { Calendar, type DateRange } from "@/components/Calendar";
 import { dailyQuote, buildInsights } from "@/lib/insights";
 
 export default function Dashboard() {
@@ -42,6 +45,9 @@ export default function Dashboard() {
   const [userId, setUserId] = useState<string | null>(null);
   const [income, setIncome] = useState(0);
   const [currency, setCurrency] = useState("USD");
+  const [secondary, setSecondary] = useState<string | null>(null);
+  const [fxRate, setFxRate] = useState<number | null>(null);
+  const [range, setRange] = useState<DateRange | null>(null);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
@@ -68,7 +74,7 @@ export default function Dashboard() {
     setUserId(user.id);
 
     const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }, { data: se }] = await Promise.all([
-      supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
+      supabase.from("profiles").select("monthly_income, currency, secondary_currency, fx_rate").eq("id", user.id).single(),
       supabase.from("budgets").select("*").eq("user_id", user.id),
       supabase
         .from("transactions")
@@ -83,6 +89,8 @@ export default function Dashboard() {
     if (profile) {
       setIncome(Number(profile.monthly_income));
       setCurrency(profile.currency ?? "USD");
+      setSecondary(profile.secondary_currency ?? null);
+      setFxRate(profile.fx_rate != null ? Number(profile.fx_rate) : null);
     }
     setBudgets((b as Budget[]) ?? []);
     setTxns((t as Transaction[]) ?? []);
@@ -255,11 +263,25 @@ export default function Dashboard() {
     setModalOpen(true);
   }
 
+  async function saveFx(sec: string | null, rate: number | null) {
+    if (!userId) return;
+    setSecondary(sec);
+    setFxRate(rate);
+    await supabase.from("profiles").upsert({
+      id: userId,
+      secondary_currency: sec,
+      fx_rate: rate,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
   const summary = useMemo(() => computeSummary(income, budgets, txns, month), [income, budgets, txns, month]);
   const days = atCurrentMonth ? daysLeftInMonth() : daysInMonth(month);
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
+  const savingsFmt = (n: number) =>
+    new Intl.NumberFormat("en-PH", { style: "currency", currency: SAVINGS_CURRENCY, maximumFractionDigits: 0 }).format(n);
 
   const discretionaryCats = CATEGORIES.filter((c) => !FIXED_CATEGORIES.includes(c));
   const envelopes = discretionaryCats
@@ -273,6 +295,20 @@ export default function Dashboard() {
     () => txns.filter((t) => t.occurred_on.slice(0, 7) === month.slice(0, 7)),
     [txns, month],
   );
+
+  // Recent list respects a calendar selection when one is active.
+  const visibleTxns = useMemo(
+    () =>
+      range
+        ? txns.filter((t) => t.occurred_on >= range.start && t.occurred_on <= range.end)
+        : monthTxns,
+    [txns, monthTxns, range],
+  );
+
+  // A calendar range only makes sense within the viewed month.
+  useEffect(() => {
+    setRange(null);
+  }, [month]);
 
   const needsSetup = !loading && income === 0 && budgets.length === 0;
 
@@ -297,9 +333,8 @@ export default function Dashboard() {
 
   const quote = dailyQuote();
   const insights = buildInsights({
-    income: summary.income,
     savedThisMonth,
-    savingsTotal,
+    savingsTotal: allTimeSaved,
     creditsRemaining,
     hasCredits: credits.length > 0,
     safeToSpendDaily: summary.safeToSpendDaily,
@@ -308,6 +343,7 @@ export default function Dashboard() {
     topCategory,
     overspent,
     fmt,
+    savingsFmt,
   });
 
   return (
@@ -380,6 +416,11 @@ export default function Dashboard() {
             <Stat icon={TrendingDown} label="Spent" value={fmt(summary.discretionarySpent)} tone="text-sky-400" />
           </section>
 
+          {/* Income coming vs deducted */}
+          <section className="mb-8">
+            <FlowChart month={month} income={summary.income} txns={txns} currency={currency} />
+          </section>
+
           {/* Credits + savings quick access */}
           <section className="mb-8 grid grid-cols-2 gap-3">
             <Link
@@ -401,9 +442,14 @@ export default function Dashboard() {
                 <PiggyBank className="h-4 w-4" />
                 <span className="text-xs font-medium">Savings</span>
               </div>
-              <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{fmt(allTimeSaved)}</p>
+              <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{savingsFmt(allTimeSaved)}</p>
               <p className="text-[11px] text-neutral-500">total saved</p>
             </Link>
+          </section>
+
+          {/* Exchange rate — editable, moved out of Settings */}
+          <section className="mb-8">
+            <FxRateCard currency={currency} secondary={secondary} fxRate={fxRate} onSave={saveFx} />
           </section>
 
           {/* Daily motivation + insights */}
@@ -452,17 +498,24 @@ export default function Dashboard() {
             )}
           </section>
 
+          {/* Calendar — navigate dates and weeks */}
+          <section className="mb-8">
+            <Calendar month={month} txns={txns} currency={currency} range={range} onRangeChange={setRange} />
+          </section>
+
           {/* Recent transactions */}
           <section>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-neutral-400">Recent</h2>
-              {monthTxns.length > 0 && (
-                <span className="text-xs text-neutral-600">{monthTxns.length} this month</span>
+              {visibleTxns.length > 0 && (
+                <span className="text-xs text-neutral-600">
+                  {visibleTxns.length} {range ? "selected" : "this month"}
+                </span>
               )}
             </div>
-            {monthTxns.length > 0 ? (
+            {visibleTxns.length > 0 ? (
               <div className="grid grid-cols-1 gap-2">
-                {monthTxns.map((t) => (
+                {visibleTxns.map((t) => (
                   <TransactionRow
                     key={t.id}
                     txn={t}
@@ -473,7 +526,7 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <EmptyCard icon={Receipt} text="No expenses logged this month yet." />
+              <EmptyCard icon={Receipt} text={range ? "No expenses on the selected dates." : "No expenses logged this month yet."} />
             )}
           </section>
         </>

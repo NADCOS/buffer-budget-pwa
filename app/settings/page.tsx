@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, Loader2, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { fetchRate } from "@/lib/fx";
 import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Category } from "@/lib/types";
 import { firstOfMonth } from "@/lib/budget";
 
@@ -19,9 +18,6 @@ export default function SettingsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [income, setIncome] = useState("");
   const [currency, setCurrency] = useState("USD");
-  const [secondary, setSecondary] = useState("");
-  const [fxRate, setFxRate] = useState("");
-  const [liveRate, setLiveRate] = useState<number | null>(null);
   const [limits, setLimits] = useState<Record<Category, string>>(
     () => Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>,
   );
@@ -35,15 +31,13 @@ export default function SettingsPage() {
       setUserId(user.id);
 
       const [{ data: profile }, { data: budgets }] = await Promise.all([
-        supabase.from("profiles").select("monthly_income, currency, secondary_currency, fx_rate").eq("id", user.id).single(),
+        supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
         supabase.from("budgets").select("*").eq("user_id", user.id).eq("month", month),
       ]);
 
       if (profile) {
         setIncome(String(profile.monthly_income ?? ""));
         setCurrency(profile.currency ?? "USD");
-        setSecondary(profile.secondary_currency ?? "");
-        setFxRate(profile.fx_rate ? String(profile.fx_rate) : "");
       }
       const map = Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>;
       (budgets as Budget[] | null)?.forEach((b) => {
@@ -53,14 +47,6 @@ export default function SettingsPage() {
       setLoading(false);
     })();
   }, [supabase, month]);
-
-  // Show the live rate as a reference for the manual field.
-  useEffect(() => {
-    if (!secondary || secondary === currency) { setLiveRate(null); return; }
-    let alive = true;
-    fetchRate(currency, secondary).then((r) => { if (alive) setLiveRate(r); });
-    return () => { alive = false; };
-  }, [currency, secondary]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -72,8 +58,6 @@ export default function SettingsPage() {
       id: userId,
       monthly_income: parseFloat(income) || 0,
       currency,
-      secondary_currency: secondary || null,
-      fx_rate: fxRate ? parseFloat(fxRate) : null,
       updated_at: new Date().toISOString(),
     });
 
@@ -144,50 +128,6 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="mb-1.5 block text-xs text-neutral-500">
-                  Also show savings in
-                </label>
-                <select
-                  value={secondary}
-                  onChange={(e) => setSecondary(e.target.value)}
-                  className={inputCls}
-                >
-                  <option value="">Off</option>
-                  {CURRENCIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
-                <p className="mt-1.5 text-xs text-neutral-500">
-                  Adds a converted total on the Savings screen (live exchange rate).
-                </p>
-              </div>
-              {secondary && secondary !== currency && (
-                <div>
-                  <label className="mb-1.5 block text-xs text-neutral-500">
-                    Exchange rate — 1 {currency} = ? {secondary} (optional)
-                  </label>
-                  <input
-                    type="number" inputMode="decimal" step="0.0001" min="0"
-                    placeholder="Leave blank for live rate"
-                    value={fxRate}
-                    onChange={(e) => setFxRate(e.target.value)}
-                    className={inputCls}
-                  />
-                  <p className="mt-1.5 text-xs text-neutral-500">
-                    Set this to pin an exact daily rate; clear it to use the live rate.
-                  </p>
-                  {liveRate != null && (
-                    <p className="mt-1.5 text-xs text-neutral-500">
-                      Live now: 1 {currency} ={" "}
-                      {new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(liveRate)} {secondary}.{" "}
-                      <button type="button" onClick={() => setFxRate("")} className="font-medium text-emerald-400">
-                        Use live rate
-                      </button>
-                    </p>
-                  )}
-                </div>
-              )}
             </div>
           </section>
 
