@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Check, Loader2, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchRate } from "@/lib/fx";
 import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Category } from "@/lib/types";
 import { firstOfMonth } from "@/lib/budget";
 
@@ -20,6 +21,7 @@ export default function SettingsPage() {
   const [currency, setCurrency] = useState("USD");
   const [secondary, setSecondary] = useState("");
   const [fxRate, setFxRate] = useState("");
+  const [liveRate, setLiveRate] = useState<number | null>(null);
   const [limits, setLimits] = useState<Record<Category, string>>(
     () => Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>,
   );
@@ -51,6 +53,14 @@ export default function SettingsPage() {
       setLoading(false);
     })();
   }, [supabase, month]);
+
+  // Show the live rate as a reference for the manual field.
+  useEffect(() => {
+    if (!secondary || secondary === currency) { setLiveRate(null); return; }
+    let alive = true;
+    fetchRate(currency, secondary).then((r) => { if (alive) setLiveRate(r); });
+    return () => { alive = false; };
+  }, [currency, secondary]);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -167,6 +177,15 @@ export default function SettingsPage() {
                   <p className="mt-1.5 text-xs text-neutral-500">
                     Set this to pin an exact daily rate; clear it to use the live rate.
                   </p>
+                  {liveRate != null && (
+                    <p className="mt-1.5 text-xs text-neutral-500">
+                      Live now: 1 {currency} ={" "}
+                      {new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(liveRate)} {secondary}.{" "}
+                      <button type="button" onClick={() => setFxRate("")} className="font-medium text-emerald-400">
+                        Use live rate
+                      </button>
+                    </p>
+                  )}
                 </div>
               )}
             </div>

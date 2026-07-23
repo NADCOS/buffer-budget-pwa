@@ -411,7 +411,9 @@ export default function Dashboard() {
             <div className="mb-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
               <div className="flex items-center gap-1.5 text-emerald-400">
                 <Sparkles className="h-3.5 w-3.5" />
-                <span className="text-[11px] font-semibold uppercase tracking-wide">Today</span>
+                <span className="text-[11px] font-semibold uppercase tracking-wide">
+                  Today · {new Date().toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                </span>
               </div>
               <p className="mt-1.5 text-sm text-neutral-100 [text-wrap:pretty]">{quote}</p>
             </div>

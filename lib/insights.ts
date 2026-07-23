@@ -20,6 +20,19 @@ export const MONEY_QUOTES: string[] = [
   "The goal isn't to be rich for a day, but secure for a lifetime.",
   "Invest in things that pay you while you sleep.",
   "Future you is counting on the deposit you make right now.",
+  "Automate your savings so willpower never gets a vote.",
+  "Don't save what's left after spending; spend what's left after saving.",
+  "Cutting one daily expense can fund a yearly investment.",
+  "A small habit repeated for years beats a big effort done once.",
+  "You don't need more income to start — you need to start.",
+  "Treat your savings like a bill you must pay yourself.",
+  "Every peso invested today is a worker hired for your future.",
+  "Emergencies are certain; an emergency fund makes them survivable.",
+  "Patience turns small savings into large freedom.",
+  "The market rewards those who stay in their seats.",
+  "Rich is having money; wealthy is having time — buy back your time.",
+  "The habit is the asset. Build the habit first.",
+  "Financial freedom is built one boring deposit at a time.",
 ];
 
 /** Deterministic quote for a given calendar day (timezone-safe). */
