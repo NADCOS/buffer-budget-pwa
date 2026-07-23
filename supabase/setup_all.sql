@@ -98,6 +98,28 @@ create table if not exists public.remittances (
   created_at timestamptz not null default now()
 );
 
+-- 8) RECURRING RULES (auto-generate transactions on a schedule)
+create table if not exists public.recurring (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users(id) on delete cascade,
+  amount       numeric(12,2) not null default 0 check (amount >= 0),
+  category     txn_category not null default 'Miscellaneous',
+  description  text,
+  cadence      text not null default 'monthly' check (cadence in ('weekly','biweekly','monthly')),
+  day_of_month int check (day_of_month between 1 and 31),
+  anchor_date  date not null default now(),
+  auto_post    boolean not null default false,
+  active       boolean not null default true,
+  last_run     date,
+  created_at   timestamptz not null default now()
+);
+
+-- Link generated transactions back to their rule (idempotent generation).
+alter table public.transactions add column if not exists recurring_id uuid;
+create unique index if not exists uniq_txn_recurring
+  on public.transactions (user_id, recurring_id, occurred_on)
+  where recurring_id is not null;
+
 -- Indexes ------------------------------------------------------
 create index if not exists idx_txn_user_date      on public.transactions   (user_id, occurred_on desc);
 create index if not exists idx_budget_user_month  on public.budgets        (user_id, month);
@@ -105,6 +127,7 @@ create index if not exists idx_credits_user       on public.credits        (user
 create index if not exists idx_accounts_user      on public.accounts       (user_id, created_at);
 create index if not exists idx_savings_entries_user on public.savings_entries (user_id, month);
 create index if not exists idx_remittances_user   on public.remittances     (user_id, sent_on desc);
+create index if not exists idx_recurring_user     on public.recurring       (user_id, active);
 
 -- Auto-provision a profile row on signup ----------------------
 create or replace function public.handle_new_user()
@@ -131,6 +154,7 @@ alter table public.credits         enable row level security;
 alter table public.accounts        enable row level security;
 alter table public.savings_entries enable row level security;
 alter table public.remittances     enable row level security;
+alter table public.recurring       enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles for select using (auth.uid() = id);
@@ -156,13 +180,16 @@ create policy "savings_entries_all_own" on public.savings_entries for all using 
 
 drop policy if exists "remittances_all_own" on public.remittances;
 create policy "remittances_all_own" on public.remittances for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "recurring_all_own" on public.recurring;
+create policy "recurring_all_own" on public.recurring for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 -- =============================================================
 --  REALTIME — add every table to the publication (ignore dupes)
 -- =============================================================
 do $$
 declare t text;
 begin
-  foreach t in array array['profiles','budgets','transactions','credits','accounts','savings_entries','remittances']
+  foreach t in array array['profiles','budgets','transactions','credits','accounts','savings_entries','remittances','recurring']
   loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);

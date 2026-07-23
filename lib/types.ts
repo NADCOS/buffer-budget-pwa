@@ -42,6 +42,7 @@ export interface Transaction {
   description: string | null;
   occurred_on: string; // ISO date
   client_uuid: string | null;
+  recurring_id?: string | null;
   created_at?: string;
   /** UI-only: set on optimistic rows that have not confirmed with the server. */
   pending?: boolean;
@@ -84,5 +85,23 @@ export interface Remittance {
   recipient: string | null;
   sent_on: string; // ISO date
   note: string | null;
+  created_at?: string;
+}
+
+export type Cadence = "weekly" | "biweekly" | "monthly";
+
+/** A rule that auto-generates transactions on a schedule. */
+export interface Recurring {
+  id: string;
+  user_id: string;
+  amount: number;
+  category: Category;
+  description: string | null;
+  cadence: Cadence;
+  day_of_month: number | null; // 1–31, for monthly
+  anchor_date: string; // ISO date — first occurrence / phase anchor
+  auto_post: boolean; // true = post silently, false = suggest first
+  active: boolean;
+  last_run: string | null; // ISO date generated through
   created_at?: string;
 }

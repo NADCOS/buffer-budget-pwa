@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Plus,
@@ -18,10 +18,11 @@ import {
   Sparkles,
   Lightbulb,
   Send,
+  Repeat,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
-import { CATEGORIES, FIXED_CATEGORIES, SAVINGS_CURRENCY, type Budget, type Transaction, type Credit, type Account, type SavingsEntry, type Remittance } from "@/lib/types";
+import { CATEGORIES, FIXED_CATEGORIES, SAVINGS_CURRENCY, type Budget, type Transaction, type Credit, type Account, type SavingsEntry, type Remittance, type Recurring } from "@/lib/types";
 import {
   computeSummary,
   firstOfMonth,
@@ -39,6 +40,9 @@ import { QuickAddModal, type TxnDraft } from "@/components/QuickAddModal";
 import { FxRateCard } from "@/components/FxRateCard";
 import { FlowChart } from "@/components/FlowChart";
 import { Calendar, type DateRange } from "@/components/Calendar";
+import { CategoryChart } from "@/components/CategoryChart";
+import { RecurringPrompt, type PendingRecurring } from "@/components/RecurringPrompt";
+import { dueOccurrences, todayISO } from "@/lib/recurring";
 import { dailyQuote, buildInsights } from "@/lib/insights";
 
 export default function Dashboard() {
@@ -55,6 +59,8 @@ export default function Dashboard() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
   const [remittances, setRemittances] = useState<Remittance[]>([]);
+  const [recurring, setRecurring] = useState<Recurring[]>([]);
+  const [pendingRecurring, setPendingRecurring] = useState<PendingRecurring[]>([]);
   const [fullName, setFullName] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
@@ -83,6 +89,7 @@ export default function Dashboard() {
         setAccounts(c.accounts ?? []);
         setSavingsEntries(c.savingsEntries ?? []);
         setRemittances(c.remittances ?? []);
+        setRecurring(c.recurring ?? []);
         setFullName(c.fullName ?? null);
         setLoading(false);
       }
@@ -97,7 +104,7 @@ export default function Dashboard() {
     if (!user) return;
     setUserId(user.id);
 
-    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }, { data: se }, { data: rm }] = await Promise.all([
+    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }, { data: se }, { data: rm }, { data: rc }] = await Promise.all([
       supabase.from("profiles").select("monthly_income, currency, secondary_currency, fx_rate, full_name").eq("id", user.id).single(),
       supabase.from("budgets").select("*").eq("user_id", user.id),
       supabase
@@ -109,6 +116,7 @@ export default function Dashboard() {
       supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("savings_entries").select("*").eq("user_id", user.id).order("month"),
       supabase.from("remittances").select("*").eq("user_id", user.id).order("sent_on", { ascending: false }),
+      supabase.from("recurring").select("*").eq("user_id", user.id).order("created_at"),
     ]);
 
     if (profile) {
@@ -124,12 +132,14 @@ export default function Dashboard() {
     const acx = (ac as Account[]) ?? [];
     const sex = (se as SavingsEntry[]) ?? [];
     const rmx = (rm as Remittance[]) ?? [];
+    const rcx = (rc as Recurring[]) ?? [];
     setBudgets(bx);
     setTxns(tx);
     setCredits(crx);
     setAccounts(acx);
     setSavingsEntries(sex);
     setRemittances(rmx);
+    setRecurring(rcx);
     setLoading(false);
     refreshQueued();
 
@@ -141,7 +151,7 @@ export default function Dashboard() {
         secondary: profile?.secondary_currency ?? null,
         fxRate: profile?.fx_rate != null ? Number(profile.fx_rate) : null,
         fullName: profile?.full_name ?? null,
-        budgets: bx, txns: tx, credits: crx, accounts: acx, savingsEntries: sex, remittances: rmx,
+        budgets: bx, txns: tx, credits: crx, accounts: acx, savingsEntries: sex, remittances: rmx, recurring: rcx,
       }));
     } catch {}
   }, [supabase, refreshQueued]);
@@ -149,6 +159,64 @@ export default function Dashboard() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // ── Recurring catch-up: auto-post fixed rules, queue the rest ──
+  const catchupBusy = useRef(false);
+  useEffect(() => {
+    if (!userId || recurring.length === 0 || catchupBusy.current) return;
+    catchupBusy.current = true;
+    (async () => {
+      const suggestions: PendingRecurring[] = [];
+      let posted = false;
+      for (const r of recurring) {
+        const dates = dueOccurrences(r);
+        if (dates.length === 0) continue;
+        if (r.auto_post) {
+          for (const d of dates) {
+            await supabase.from("transactions").insert({
+              user_id: userId,
+              amount: r.amount,
+              category: r.category,
+              description: r.description,
+              occurred_on: d,
+              client_uuid: crypto.randomUUID(),
+              recurring_id: r.id,
+            });
+          }
+          await supabase.from("recurring").update({ last_run: todayISO() }).eq("id", r.id);
+          posted = true;
+        } else {
+          suggestions.push({ rule: r, dates });
+        }
+      }
+      setPendingRecurring(suggestions);
+      catchupBusy.current = false;
+      if (posted) load();
+    })();
+  }, [userId, recurring, supabase, load]);
+
+  async function confirmRecurring(p: PendingRecurring) {
+    if (!userId) return;
+    setPendingRecurring((prev) => prev.filter((x) => x.rule.id !== p.rule.id));
+    for (const d of p.dates) {
+      await supabase.from("transactions").insert({
+        user_id: userId,
+        amount: p.rule.amount,
+        category: p.rule.category,
+        description: p.rule.description,
+        occurred_on: d,
+        client_uuid: crypto.randomUUID(),
+        recurring_id: p.rule.id,
+      });
+    }
+    await supabase.from("recurring").update({ last_run: todayISO() }).eq("id", p.rule.id);
+    load();
+  }
+
+  async function skipRecurring(p: PendingRecurring) {
+    setPendingRecurring((prev) => prev.filter((x) => x.rule.id !== p.rule.id));
+    await supabase.from("recurring").update({ last_run: todayISO() }).eq("id", p.rule.id);
+  }
 
   // ── Live cross-device sync ────────────────────────────────
   useEffect(() => {
@@ -188,6 +256,11 @@ export default function Dashboard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "remittances", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "recurring", filter: `user_id=eq.${userId}` },
         () => load(),
       )
       .subscribe();
@@ -460,6 +533,17 @@ export default function Dashboard() {
             <h1 className="text-lg font-semibold text-neutral-100">Here&rsquo;s where your money stands</h1>
           </section>
 
+          {pendingRecurring.length > 0 && (
+            <section className="mb-8">
+              <RecurringPrompt
+                pending={pendingRecurring}
+                currency={currency}
+                onConfirm={confirmRecurring}
+                onSkip={skipRecurring}
+              />
+            </section>
+          )}
+
           {/* Safe-to-spend gauge (hero) */}
           <section className="mb-6 rounded-3xl border border-neutral-900 bg-neutral-950 py-6">
             <SafeToSpendGauge
@@ -486,6 +570,11 @@ export default function Dashboard() {
           {/* Income coming vs deducted */}
           <section className="mb-8">
             <FlowChart month={month} income={summary.income} txns={txns} currency={currency} />
+          </section>
+
+          {/* Category breakdown */}
+          <section className="mb-8">
+            <CategoryChart txns={txns} month={month} currency={currency} />
           </section>
 
           {/* Credits + savings quick access */}
@@ -526,6 +615,25 @@ export default function Dashboard() {
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium text-neutral-400">Remittance sent this month</p>
                 <p className="truncate text-xl font-bold tabular-nums text-sky-400">{fmt(remittedThisMonth)}</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-neutral-600" />
+            </Link>
+          </section>
+
+          {/* Recurring rules */}
+          <section className="mb-8">
+            <Link
+              href="/recurring"
+              className="flex items-center gap-3 rounded-2xl border border-neutral-900 bg-neutral-950 p-4 transition active:scale-[0.99]"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                <Repeat className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-neutral-400">Recurring</p>
+                <p className="truncate text-base font-semibold text-neutral-100">
+                  {recurring.filter((r) => r.active).length} active {recurring.filter((r) => r.active).length === 1 ? "rule" : "rules"}
+                </p>
               </div>
               <ChevronRight className="h-5 w-5 shrink-0 text-neutral-600" />
             </Link>
