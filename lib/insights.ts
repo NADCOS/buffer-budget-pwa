@@ -42,7 +42,6 @@ export function dailyQuote(d = new Date()): string {
 }
 
 export interface InsightInput {
-  income: number;
   savedThisMonth: number;
   savingsTotal: number;
   creditsRemaining: number;
@@ -53,6 +52,7 @@ export interface InsightInput {
   topCategory: { category: Category; amount: number } | null;
   overspent: { category: Category; over: number }[];
   fmt: (n: number) => string;
+  savingsFmt: (n: number) => string;
 }
 
 /** Data-driven nudges — spending first, then saving + investing. */
@@ -74,18 +74,10 @@ export function buildInsights(i: InsightInput): string[] {
   }
 
   // ── Saving + investing ──────────────────────────────────
-  if (i.income > 0) {
-    const rate = i.savedThisMonth / i.income;
-    if (i.savedThisMonth > 0) {
-      out.push(`You've saved ${i.fmt(i.savedThisMonth)} this month — ${Math.round(rate * 100)}% of your income.`);
-      if (rate < 0.2) {
-        out.push(`Aiming for 20% would mean setting aside ${i.fmt(Math.round(i.income * 0.2))} a month.`);
-      } else {
-        out.push(`Great rate — consider investing part of it so it compounds.`);
-      }
-    } else {
-      out.push(`No savings logged this month. Even ${i.fmt(Math.round(i.income * 0.1))} (10%) builds the habit.`);
-    }
+  if (i.savedThisMonth > 0) {
+    out.push(`You've set aside ${i.savingsFmt(i.savedThisMonth)} in savings this month — keep the streak going.`);
+  } else {
+    out.push(`No savings logged this month — even a small, regular deposit builds the habit.`);
   }
 
   if (i.creditsRemaining > 0) {
@@ -95,7 +87,7 @@ export function buildInsights(i: InsightInput): string[] {
   }
 
   if (i.savingsTotal > 0) {
-    out.push(`Your ${i.fmt(i.savingsTotal)} could be growing. A low-cost index fund is a common first step.`);
+    out.push(`Your ${i.savingsFmt(i.savingsTotal)} in savings could be growing. A low-cost index fund is a common first step.`);
   }
 
   if (i.safeToSpendDaily > 0) {

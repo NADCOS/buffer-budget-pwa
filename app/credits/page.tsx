@@ -13,6 +13,7 @@ export default function CreditsPage() {
   const [currency, setCurrency] = useState("USD");
   const [credits, setCredits] = useState<Credit[]>([]);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -43,11 +44,13 @@ export default function CreditsPage() {
 
   async function addCredit() {
     if (!userId) return;
-    const { data } = await supabase
+    setErr(null);
+    const { data, error } = await supabase
       .from("credits")
       .insert({ user_id: userId, name: "", total_amount: 0, paid_amount: 0 })
       .select()
       .single();
+    if (error) { setErr(error.message); return; }
     if (data) setCredits((prev) => [...prev, data as Credit]);
   }
 
@@ -88,6 +91,12 @@ export default function CreditsPage() {
           across {credits.length} {credits.length === 1 ? "credit" : "credits"}
         </p>
       </section>
+
+      {err && (
+        <p className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {err} — you may need to run the credits SQL migration in Supabase.
+        </p>
+      )}
 
       {loading ? (
         <div className="grid gap-3">
