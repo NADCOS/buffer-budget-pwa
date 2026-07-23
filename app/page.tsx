@@ -2,19 +2,35 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Plus, TrendingUp, TrendingDown, Landmark, Wifi, WifiOff, Settings } from "lucide-react";
+import {
+  Plus,
+  TrendingUp,
+  TrendingDown,
+  Wallet,
+  Wifi,
+  WifiOff,
+  Settings,
+  ChevronLeft,
+  ChevronRight,
+  Receipt,
+} from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
+import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Transaction } from "@/lib/types";
 import {
-  CATEGORIES,
-  FIXED_CATEGORIES,
-  type Budget,
-  type Transaction,
-} from "@/lib/types";
-import { computeSummary, firstOfMonth, spentByCategory } from "@/lib/budget";
+  computeSummary,
+  firstOfMonth,
+  spentByCategory,
+  monthLabel,
+  addMonths,
+  isCurrentMonth,
+  daysInMonth,
+  daysLeftInMonth,
+} from "@/lib/budget";
 import { SafeToSpendGauge } from "@/components/SafeToSpendGauge";
 import { EnvelopeCard } from "@/components/EnvelopeCard";
-import { QuickAddModal } from "@/components/QuickAddModal";
+import { TransactionRow } from "@/components/TransactionRow";
+import { QuickAddModal, type TxnDraft } from "@/components/QuickAddModal";
 
 export default function Dashboard() {
   const supabase = useMemo(() => createClient(), []);
@@ -24,9 +40,16 @@ export default function Dashboard() {
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<Transaction | null>(null);
   const [online, setOnline] = useState(true);
+  const [queued, setQueued] = useState(0);
+  const [loading, setLoading] = useState(true);
 
-  const month = firstOfMonth();
+  // The month currently in view (defaults to this month).
+  const [month, setMonth] = useState(() => firstOfMonth());
+  const atCurrentMonth = isCurrentMonth(month);
+
+  const refreshQueued = useCallback(() => setQueued(outbox.all().length), []);
 
   // ── Load everything (re-runnable for realtime + refocus) ──
   const load = useCallback(async () => {
@@ -52,9 +75,10 @@ export default function Dashboard() {
     }
     setBudgets((b as Budget[]) ?? []);
     setTxns((t as Transaction[]) ?? []);
-  }, [supabase]);
+    setLoading(false);
+    refreshQueued();
+  }, [supabase, refreshQueued]);
 
-  // Initial load
   useEffect(() => {
     load();
   }, [load]);
@@ -86,7 +110,7 @@ export default function Dashboard() {
     };
   }, [supabase, userId, load]);
 
-  // Refetch whenever the app regains focus (e.g. switch back from another device/tab)
+  // Refetch whenever the app regains focus.
   useEffect(() => {
     const onFocus = () => {
       if (document.visibilityState === "visible") load();
@@ -109,13 +133,12 @@ export default function Dashboard() {
       if (!error) {
         outbox.remove(item.client_uuid);
         setTxns((prev) =>
-          prev.map((tx) =>
-            tx.client_uuid === item.client_uuid ? { ...tx, pending: false } : tx,
-          ),
+          prev.map((tx) => (tx.client_uuid === item.client_uuid ? { ...tx, pending: false } : tx)),
         );
       }
     }
-  }, [supabase]);
+    refreshQueued();
+  }, [supabase, refreshQueued]);
 
   useEffect(() => {
     const update = () => {
@@ -131,23 +154,45 @@ export default function Dashboard() {
     };
   }, [flushOutbox]);
 
-  // ── Optimistic add ────────────────────────────────────────
-  async function addTransaction(t: Omit<Transaction, "id" | "user_id">) {
+  // ── Create / edit a transaction (optimistic) ──────────────
+  async function saveTransaction(draft: TxnDraft) {
     if (!userId) return;
-    const optimistic: Transaction = {
-      ...t,
-      id: t.client_uuid!,
-      user_id: userId,
-      pending: true,
-    };
-    // 1) Instant UI update
-    setTxns((prev) => [optimistic, ...prev]);
     if (navigator.vibrate) navigator.vibrate(10);
 
-    const payload = { ...t, user_id: userId };
-    outbox.add({ client_uuid: t.client_uuid!, payload });
+    const base = {
+      amount: draft.amount,
+      category: draft.category,
+      description: draft.description,
+      occurred_on: draft.occurred_on,
+      client_uuid: draft.client_uuid,
+    };
 
-    // 2) Sync (silently queues if offline)
+    // EDIT — update an existing row in place.
+    if (draft.id) {
+      const optimistic: Transaction = { ...base, id: draft.id, user_id: userId, pending: true };
+      setTxns((prev) => prev.map((t) => (t.id === draft.id ? optimistic : t)));
+      if (navigator.onLine) {
+        const res = base.client_uuid
+          ? await supabase
+              .from("transactions")
+              .upsert({ ...base, user_id: userId }, { onConflict: "user_id,client_uuid" })
+              .select()
+              .single()
+          : await supabase.from("transactions").update(base).eq("id", draft.id).select().single();
+        if (!res.error && res.data) {
+          setTxns((prev) => prev.map((t) => (t.id === draft.id ? (res.data as Transaction) : t)));
+        }
+      }
+      return;
+    }
+
+    // ADD — new row, queued to the outbox for offline safety.
+    const optimistic: Transaction = { ...base, id: base.client_uuid, user_id: userId, pending: true };
+    setTxns((prev) => [optimistic, ...prev]);
+    const payload = { ...base, user_id: userId };
+    outbox.add({ client_uuid: base.client_uuid, payload });
+    refreshQueued();
+
     if (navigator.onLine) {
       const { data, error } = await supabase
         .from("transactions")
@@ -155,107 +200,190 @@ export default function Dashboard() {
         .select()
         .single();
       if (!error && data) {
-        outbox.remove(t.client_uuid!);
+        outbox.remove(base.client_uuid);
+        refreshQueued();
         setTxns((prev) =>
-          prev.map((tx) =>
-            tx.client_uuid === t.client_uuid ? { ...(data as Transaction) } : tx,
-          ),
+          prev.map((tx) => (tx.client_uuid === base.client_uuid ? (data as Transaction) : tx)),
         );
       }
     }
   }
 
-  const summary = useMemo(
-    () => computeSummary(income, budgets, txns),
-    [income, budgets, txns],
-  );
+  async function deleteTransaction(t: Transaction) {
+    if (navigator.vibrate) navigator.vibrate(10);
+    setTxns((prev) => prev.filter((x) => x.id !== t.id));
+    if (t.client_uuid) outbox.remove(t.client_uuid);
+    refreshQueued();
+    if (navigator.onLine) await supabase.from("transactions").delete().eq("id", t.id);
+  }
+
+  function openAdd() {
+    setEditing(null);
+    setModalOpen(true);
+  }
+  function openEdit(t: Transaction) {
+    setEditing(t);
+    setModalOpen(true);
+  }
+
+  const summary = useMemo(() => computeSummary(income, budgets, txns, month), [income, budgets, txns, month]);
+  const days = atCurrentMonth ? daysLeftInMonth() : daysInMonth(month);
 
   const fmt = (n: number) =>
-    new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-      maximumFractionDigits: 0,
-    }).format(n);
+    new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
 
   const discretionaryCats = CATEGORIES.filter((c) => !FIXED_CATEGORIES.includes(c));
+  const envelopes = discretionaryCats
+    .map((cat) => {
+      const budget = budgets.find((b) => b.category === cat && b.month === month);
+      return { cat, limit: budget ? Number(budget.monthly_limit) : 0 };
+    })
+    .filter((e) => e.limit > 0);
+
+  const monthTxns = useMemo(
+    () => txns.filter((t) => t.occurred_on.slice(0, 7) === month.slice(0, 7)),
+    [txns, month],
+  );
+
+  const needsSetup = !loading && income === 0 && budgets.length === 0;
 
   return (
     <main className="mx-auto min-h-[100dvh] max-w-md px-5 pb-32 pt-[calc(env(safe-area-inset-top)+1.5rem)]">
-      {/* Header */}
-      <header className="mb-6 flex items-center justify-between">
-        <div>
-          <p className="text-sm text-neutral-400">Current balance</p>
-          <p className="text-3xl font-bold tabular-nums">{fmt(summary.balance)}</p>
+      {/* Header: month switcher + connection + settings */}
+      <header className="mb-6 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setMonth((m) => addMonths(m, -1))}
+            aria-label="Previous month"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-400 active:bg-neutral-900"
+          >
+            <ChevronLeft className="h-5 w-5" />
+          </button>
+          <span className="min-w-[7.5rem] text-center text-base font-semibold">{monthLabel(month)}</span>
+          <button
+            onClick={() => setMonth((m) => addMonths(m, 1))}
+            disabled={atCurrentMonth}
+            aria-label="Next month"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-neutral-400 active:bg-neutral-900 disabled:opacity-25"
+          >
+            <ChevronRight className="h-5 w-5" />
+          </button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <div
             className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ${
               online ? "bg-neutral-900 text-neutral-400" : "bg-amber-500/15 text-amber-300"
             }`}
           >
             {online ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-            {online ? "Synced" : "Offline"}
+            {online ? "Synced" : queued > 0 ? `${queued} queued` : "Offline"}
           </div>
           <Link
             href="/settings"
             aria-label="Settings"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-neutral-400"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-neutral-900 text-neutral-300"
           >
-            <Settings className="h-4.5 w-4.5" />
+            <Settings className="h-5 w-5" />
           </Link>
         </div>
       </header>
 
-      {/* Safe-to-spend gauge */}
-      <section className="mb-6 rounded-3xl border border-neutral-900 bg-neutral-950 py-6">
-        <SafeToSpendGauge
-          daily={summary.safeToSpendDaily}
-          month={summary.safeToSpendMonth}
-          currency={currency}
-        />
-        {summary.buffer > 0 && (
-          <p className="mt-2 text-center text-xs text-emerald-400">
-            +{fmt(summary.buffer)} rolled over from last month
-          </p>
-        )}
-      </section>
+      {loading ? (
+        <LoadingState />
+      ) : needsSetup ? (
+        <SetupCard />
+      ) : (
+        <>
+          {/* Safe-to-spend gauge (hero) */}
+          <section className="mb-6 rounded-3xl border border-neutral-900 bg-neutral-950 py-6">
+            <SafeToSpendGauge
+              daily={summary.safeToSpendDaily}
+              month={summary.safeToSpendMonth}
+              currency={currency}
+              days={days}
+              isCurrent={atCurrentMonth}
+            />
+            {summary.buffer > 0 && (
+              <p className="mt-2 text-center text-xs text-emerald-400">
+                +{fmt(summary.buffer)} rolled over from last month
+              </p>
+            )}
+          </section>
 
-      {/* Stat row */}
-      <section className="mb-8 grid grid-cols-3 gap-3">
-        <Stat icon={TrendingUp} label="Income" value={fmt(summary.income)} tone="text-emerald-400" />
-        <Stat icon={Landmark} label="Fixed" value={fmt(summary.fixedExpenses)} tone="text-sky-400" />
-        <Stat icon={TrendingDown} label="Spent" value={fmt(summary.discretionarySpent)} tone="text-neutral-300" />
-      </section>
+          {/* Stat row — balance is now here, not competing with the gauge */}
+          <section className="mb-8 grid grid-cols-3 gap-3">
+            <Stat icon={Wallet} label="Balance" value={fmt(summary.balance)} tone="text-neutral-100" />
+            <Stat icon={TrendingUp} label="Income" value={fmt(summary.income)} tone="text-emerald-400" />
+            <Stat icon={TrendingDown} label="Spent" value={fmt(summary.discretionarySpent)} tone="text-sky-400" />
+          </section>
 
-      {/* Envelopes */}
-      <section>
-        <h2 className="mb-3 text-sm font-semibold text-neutral-400">Envelopes</h2>
-        <div className="grid grid-cols-1 gap-3">
-          {discretionaryCats.map((cat) => {
-            const budget = budgets.find((b) => b.category === cat && b.month === month);
-            return (
-              <EnvelopeCard
-                key={cat}
-                category={cat}
-                spent={spentByCategory(txns, cat, month)}
-                limit={budget ? Number(budget.monthly_limit) : 0}
-                currency={currency}
+          {/* Envelopes */}
+          <section className="mb-8">
+            <h2 className="mb-3 text-sm font-semibold text-neutral-400">Envelopes</h2>
+            {envelopes.length > 0 ? (
+              <div className="grid grid-cols-1 gap-3">
+                {envelopes.map(({ cat, limit }) => (
+                  <EnvelopeCard
+                    key={cat}
+                    category={cat}
+                    spent={spentByCategory(txns, cat, month)}
+                    limit={limit}
+                    currency={currency}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyCard
+                text="No envelopes set for this month."
+                cta={atCurrentMonth ? { href: "/settings", label: "Set budgets" } : undefined}
               />
-            );
-          })}
-        </div>
-      </section>
+            )}
+          </section>
 
-      {/* Floating action button — 56×56, well above the 44px min target */}
+          {/* Recent transactions */}
+          <section>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-neutral-400">Recent</h2>
+              {monthTxns.length > 0 && (
+                <span className="text-xs text-neutral-600">{monthTxns.length} this month</span>
+              )}
+            </div>
+            {monthTxns.length > 0 ? (
+              <div className="grid grid-cols-1 gap-2">
+                {monthTxns.map((t) => (
+                  <TransactionRow
+                    key={t.id}
+                    txn={t}
+                    currency={currency}
+                    onEdit={openEdit}
+                    onDelete={deleteTransaction}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyCard icon={Receipt} text="No expenses logged this month yet." />
+            )}
+          </section>
+        </>
+      )}
+
+      {/* Floating action button — 56×56 */}
       <button
-        onClick={() => setModalOpen(true)}
+        onClick={openAdd}
         aria-label="Add expense"
         className="fixed bottom-[calc(env(safe-area-inset-bottom)+1.5rem)] right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500 text-black shadow-lg shadow-emerald-500/30 transition active:scale-90"
       >
         <Plus className="h-7 w-7" />
       </button>
 
-      <QuickAddModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={addTransaction} />
+      <QuickAddModal
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        onSubmit={saveTransaction}
+        onDelete={deleteTransaction}
+        editing={editing}
+        currency={currency}
+      />
     </main>
   );
 }
@@ -275,7 +403,74 @@ function Stat({
     <div className="rounded-2xl border border-neutral-900 bg-neutral-950 p-3">
       <Icon className={`h-4 w-4 ${tone}`} />
       <p className="mt-2 text-[11px] uppercase tracking-wide text-neutral-500">{label}</p>
-      <p className="text-sm font-semibold tabular-nums">{value}</p>
+      <p className="truncate text-sm font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function EmptyCard({
+  icon: Icon,
+  text,
+  cta,
+}: {
+  icon?: React.ComponentType<{ className?: string }>;
+  text: string;
+  cta?: { href: string; label: string };
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-neutral-800 bg-neutral-950 px-5 py-8 text-center">
+      {Icon && <Icon className="h-6 w-6 text-neutral-600" />}
+      <p className="text-sm text-neutral-500">{text}</p>
+      {cta && (
+        <Link
+          href={cta.href}
+          className="rounded-full bg-neutral-900 px-4 py-2 text-xs font-semibold text-emerald-400"
+        >
+          {cta.label}
+        </Link>
+      )}
+    </div>
+  );
+}
+
+function SetupCard() {
+  return (
+    <div className="flex flex-col items-center gap-4 rounded-3xl border border-neutral-900 bg-neutral-950 px-6 py-12 text-center">
+      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+        <Wallet className="h-7 w-7" />
+      </div>
+      <div>
+        <h2 className="text-lg font-semibold">Set up your budget</h2>
+        <p className="mt-1 text-sm text-neutral-500">
+          Add your monthly income and category limits to start tracking safe-to-spend.
+        </p>
+      </div>
+      <Link
+        href="/settings"
+        className="mt-2 rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-black"
+      >
+        Get started
+      </Link>
+    </div>
+  );
+}
+
+function LoadingState() {
+  return (
+    <div className="animate-pulse">
+      <div className="mb-6 flex h-72 items-center justify-center rounded-3xl border border-neutral-900 bg-neutral-950">
+        <div className="h-40 w-40 rounded-full border-[14px] border-neutral-900" />
+      </div>
+      <div className="mb-8 grid grid-cols-3 gap-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-20 rounded-2xl border border-neutral-900 bg-neutral-950" />
+        ))}
+      </div>
+      <div className="grid grid-cols-1 gap-3">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="h-20 rounded-2xl border border-neutral-900 bg-neutral-950" />
+        ))}
+      </div>
     </div>
   );
 }

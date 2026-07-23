@@ -1,15 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Check } from "lucide-react";
-import { CATEGORIES, type Category, type Transaction } from "@/lib/types";
-import { firstOfMonth } from "@/lib/budget";
+import { X, Check, Trash2 } from "lucide-react";
+import { CATEGORIES, FIXED_CATEGORIES, type Category, type Transaction } from "@/lib/types";
+
+export interface TxnDraft {
+  id?: string;
+  amount: number;
+  category: Category;
+  description: string | null;
+  occurred_on: string;
+  client_uuid: string;
+}
 
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onSubmit: (t: Omit<Transaction, "id" | "user_id">) => void;
+  onSubmit: (t: TxnDraft) => void;
+  onDelete?: (t: Transaction) => void;
+  editing?: Transaction | null;
   currency?: string;
 }
 
@@ -26,35 +36,73 @@ function currencySymbol(currency: string): string {
   }
 }
 
-export function QuickAddModal({ open, onOpenChange, onSubmit, currency = "USD" }: Props) {
+const today = () => new Date().toISOString().slice(0, 10);
+const yesterday = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+const buzz = () => {
+  if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(8);
+};
+
+const DISCRETIONARY = CATEGORIES.filter((c) => !FIXED_CATEGORIES.includes(c));
+
+export function QuickAddModal({ open, onOpenChange, onSubmit, onDelete, editing, currency = "USD" }: Props) {
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<Category>("Food");
   const [description, setDescription] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(today);
   const symbol = currencySymbol(currency);
+  const isEdit = !!editing;
 
-  function reset() {
-    setAmount("");
-    setCategory("Food");
-    setDescription("");
-    setDate(new Date().toISOString().slice(0, 10));
-  }
+  // Prefill when opening in edit mode; reset when opening fresh.
+  useEffect(() => {
+    if (!open) return;
+    if (editing) {
+      setAmount(String(editing.amount));
+      setCategory(editing.category);
+      setDescription(editing.description ?? "");
+      setDate(editing.occurred_on.slice(0, 10));
+    } else {
+      setAmount("");
+      setCategory("Food");
+      setDescription("");
+      setDate(today());
+    }
+  }, [open, editing]);
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const value = parseFloat(amount);
     if (!value || value <= 0) return;
-
+    buzz();
     onSubmit({
+      id: editing?.id,
       amount: value,
       category,
       description: description.trim() || null,
       occurred_on: date,
-      client_uuid: crypto.randomUUID(),
+      client_uuid: editing?.client_uuid ?? crypto.randomUUID(),
     });
-    reset();
     onOpenChange(false);
   }
+
+  const chip = (c: Category) => (
+    <button
+      key={c}
+      type="button"
+      onClick={() => {
+        buzz();
+        setCategory(c);
+      }}
+      className={`h-12 rounded-xl text-sm font-medium transition active:scale-95 ${
+        category === c ? "bg-emerald-500 text-black" : "bg-neutral-900 text-neutral-300"
+      }`}
+    >
+      {c}
+    </button>
+  );
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -67,10 +115,28 @@ export function QuickAddModal({ open, onOpenChange, onSubmit, currency = "USD" }
           <div className="mx-auto mt-3 h-1.5 w-10 rounded-full bg-neutral-700" />
           <form onSubmit={submit} className="px-5 pb-6 pt-4">
             <div className="mb-5 flex items-center justify-between">
-              <Dialog.Title className="text-lg font-semibold">Add expense</Dialog.Title>
-              <Dialog.Close className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-neutral-400">
-                <X className="h-5 w-5" />
-              </Dialog.Close>
+              <Dialog.Title className="text-lg font-semibold">
+                {isEdit ? "Edit expense" : "Add expense"}
+              </Dialog.Title>
+              <div className="flex items-center gap-2">
+                {isEdit && onDelete && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      buzz();
+                      onDelete(editing!);
+                      onOpenChange(false);
+                    }}
+                    aria-label="Delete expense"
+                    className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/15 text-red-400"
+                  >
+                    <Trash2 className="h-4.5 w-4.5" />
+                  </button>
+                )}
+                <Dialog.Close className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-900 text-neutral-400">
+                  <X className="h-5 w-5" />
+                </Dialog.Close>
+              </div>
             </div>
 
             {/* Amount */}
@@ -91,23 +157,14 @@ export function QuickAddModal({ open, onOpenChange, onSubmit, currency = "USD" }
               </div>
             </div>
 
-            {/* Category chips */}
-            <div className="mb-4 grid grid-cols-3 gap-2">
-              {CATEGORIES.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => setCategory(c)}
-                  className={`h-12 rounded-xl text-sm font-medium transition active:scale-95 ${
-                    category === c
-                      ? "bg-emerald-500 text-black"
-                      : "bg-neutral-900 text-neutral-300"
-                  }`}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
+            {/* Discretionary categories */}
+            <div className="mb-3 grid grid-cols-2 gap-2">{DISCRETIONARY.map(chip)}</div>
+
+            {/* Fixed / recurring categories */}
+            <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-neutral-500">
+              Fixed / recurring
+            </p>
+            <div className="mb-4 grid grid-cols-2 gap-2">{FIXED_CATEGORIES.map(chip)}</div>
 
             {/* Description */}
             <input
@@ -118,20 +175,40 @@ export function QuickAddModal({ open, onOpenChange, onSubmit, currency = "USD" }
               className="mb-3 h-12 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-4 text-base outline-none placeholder:text-neutral-500 focus:border-emerald-500"
             />
 
-            {/* Date */}
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="mb-5 h-12 w-full rounded-xl border border-neutral-800 bg-neutral-900 px-4 text-base outline-none focus:border-emerald-500"
-            />
+            {/* Date + quick-pick */}
+            <div className="mb-5 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setDate(today())}
+                className={`h-12 flex-1 rounded-xl text-sm font-medium transition active:scale-95 ${
+                  date === today() ? "bg-emerald-500 text-black" : "bg-neutral-900 text-neutral-300"
+                }`}
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                onClick={() => setDate(yesterday())}
+                className={`h-12 flex-1 rounded-xl text-sm font-medium transition active:scale-95 ${
+                  date === yesterday() ? "bg-emerald-500 text-black" : "bg-neutral-900 text-neutral-300"
+                }`}
+              >
+                Yesterday
+              </button>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="h-12 flex-1 rounded-xl border border-neutral-800 bg-neutral-900 px-3 text-sm outline-none focus:border-emerald-500"
+              />
+            </div>
 
             <button
               type="submit"
               className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 text-base font-semibold text-black transition active:scale-[0.98]"
             >
               <Check className="h-5 w-5" />
-              Add expense
+              {isEdit ? "Save changes" : "Add expense"}
             </button>
           </form>
         </Dialog.Content>

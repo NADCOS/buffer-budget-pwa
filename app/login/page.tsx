@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Loader2, Wallet } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { Logo } from "@/components/Logo";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -58,9 +59,7 @@ export default function LoginPage() {
     <main className="flex min-h-[100dvh] flex-col justify-center bg-black px-6 pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] text-white">
       <div className="mx-auto w-full max-w-sm">
         <div className="mb-10 flex flex-col items-center text-center">
-          <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-emerald-500/10 ring-1 ring-emerald-500/30">
-            <Wallet className="h-8 w-8 text-emerald-400" />
-          </div>
+          <Logo size={64} priority className="mb-5" />
           <h1 className="text-2xl font-semibold tracking-tight">Buffer</h1>
           <p className="mt-2 text-sm text-neutral-400">
             Know exactly what&apos;s safe to spend today.

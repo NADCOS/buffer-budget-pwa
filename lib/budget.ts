@@ -14,6 +14,33 @@ export function daysLeftInMonth(d = new Date()): number {
   return Math.max(1, end.getDate() - d.getDate() + 1);
 }
 
+/** Parse an ISO first-of-month string into a LOCAL Date (tz-safe). */
+export function parseMonth(monthStart: string): Date {
+  const [y, m] = monthStart.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, 1);
+}
+
+export function daysInMonth(monthStart: string): number {
+  const d = parseMonth(monthStart);
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+}
+
+export function isCurrentMonth(monthStart: string): boolean {
+  return monthStart.slice(0, 7) === firstOfMonth().slice(0, 7);
+}
+
+export function monthLabel(monthStart: string): string {
+  return parseMonth(monthStart).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric",
+  });
+}
+
+export function addMonths(monthStart: string, delta: number): string {
+  const d = parseMonth(monthStart);
+  return firstOfMonth(new Date(d.getFullYear(), d.getMonth() + delta, 1));
+}
+
 function inMonth(iso: string, monthStart: string): boolean {
   return iso.slice(0, 7) === monthStart.slice(0, 7);
 }
@@ -46,7 +73,7 @@ export function rolloverBuffer(
   txns: Transaction[],
   currentMonth: string,
 ): number {
-  const d = new Date(currentMonth);
+  const d = parseMonth(currentMonth);
   const prevMonth = firstOfMonth(new Date(d.getFullYear(), d.getMonth() - 1, 1));
 
   const discretionaryLimit = budgets
@@ -79,10 +106,8 @@ export function computeSummary(
   income: number,
   budgets: Budget[],
   txns: Transaction[],
-  now = new Date(),
+  month: string = firstOfMonth(),
 ): DashboardSummary {
-  const month = firstOfMonth(now);
-
   const fixedExpenses = budgets
     .filter((b) => b.is_fixed && inMonth(b.month, month))
     .reduce((s, b) => s + Number(b.monthly_limit), 0);
@@ -107,7 +132,8 @@ export function computeSummary(
     0,
     discretionaryBudget + buffer - discretionarySpent,
   );
-  const safeToSpendDaily = safeToSpendMonth / daysLeftInMonth(now);
+  const days = isCurrentMonth(month) ? daysLeftInMonth() : daysInMonth(month);
+  const safeToSpendDaily = safeToSpendMonth / days;
 
   return {
     balance: income - totalSpent,

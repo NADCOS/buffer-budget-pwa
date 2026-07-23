@@ -1,16 +1,15 @@
 "use client";
 
-import { daysLeftInMonth } from "@/lib/budget";
-
 interface Props {
   daily: number;
   month: number;
   currency: string;
+  days: number;
+  isCurrent: boolean;
 }
 
 /** Circular safe-to-spend gauge. Fills toward the daily allowance. */
-export function SafeToSpendGauge({ daily, month, currency }: Props) {
-  const days = daysLeftInMonth();
+export function SafeToSpendGauge({ daily, month, currency, days, isCurrent }: Props) {
   const fmt = (n: number) =>
     new Intl.NumberFormat(undefined, {
       style: "currency",
@@ -46,13 +45,13 @@ export function SafeToSpendGauge({ daily, month, currency }: Props) {
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
         <span className="text-xs font-medium uppercase tracking-wider text-neutral-400">
-          Safe to spend today
+          {isCurrent ? "Safe to spend today" : "Daily allowance"}
         </span>
         <span className="mt-1 text-4xl font-bold tabular-nums" style={{ color: tone }}>
           {fmt(daily)}
         </span>
         <span className="mt-1 text-xs text-neutral-500">
-          {fmt(month)} left · {days} days
+          {fmt(month)} {isCurrent ? "left" : "budget"} · {days} days
         </span>
       </div>
     </div>
