@@ -32,6 +32,18 @@ body {
   from { transform: translateY(100%); }
   to { transform: translateY(0); }
 }
+@keyframes ringPulse {
+  0%   { transform: scale(0.7); opacity: 0.7; }
+  70%  { transform: scale(1.7); opacity: 0; }
+  100% { transform: scale(1.7); opacity: 0; }
+}
+@keyframes logoPop {
+  from { transform: scale(0.82); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+}
 
 /* Hide number-input spinners for the amount field */
 input[type="number"]::-webkit-outer-spin-button,

@@ -75,3 +75,14 @@ export interface SavingsEntry {
   note: string | null;
   created_at?: string;
 }
+
+/** A remittance sent home (money out, typically converted to PHP). */
+export interface Remittance {
+  id: string;
+  user_id: string;
+  amount: number; // in the user's budget currency
+  recipient: string | null;
+  sent_on: string; // ISO date
+  note: string | null;
+  created_at?: string;
+}

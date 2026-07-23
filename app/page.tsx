@@ -17,10 +17,11 @@ import {
   PiggyBank,
   Sparkles,
   Lightbulb,
+  Send,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
-import { CATEGORIES, FIXED_CATEGORIES, SAVINGS_CURRENCY, type Budget, type Transaction, type Credit, type Account, type SavingsEntry } from "@/lib/types";
+import { CATEGORIES, FIXED_CATEGORIES, SAVINGS_CURRENCY, type Budget, type Transaction, type Credit, type Account, type SavingsEntry, type Remittance } from "@/lib/types";
 import {
   computeSummary,
   firstOfMonth,
@@ -53,6 +54,8 @@ export default function Dashboard() {
   const [credits, setCredits] = useState<Credit[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
+  const [remittances, setRemittances] = useState<Remittance[]>([]);
+  const [fullName, setFullName] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [online, setOnline] = useState(true);
@@ -65,6 +68,27 @@ export default function Dashboard() {
 
   const refreshQueued = useCallback(() => setQueued(outbox.all().length), []);
 
+  // Instant paint: hydrate from the last snapshot before the network responds.
+  useEffect(() => {
+    try {
+      const c = JSON.parse(localStorage.getItem("buffer.dash") || "null");
+      if (c) {
+        setIncome(c.income ?? 0);
+        setCurrency(c.currency ?? "USD");
+        setSecondary(c.secondary ?? null);
+        setFxRate(c.fxRate ?? null);
+        setBudgets(c.budgets ?? []);
+        setTxns(c.txns ?? []);
+        setCredits(c.credits ?? []);
+        setAccounts(c.accounts ?? []);
+        setSavingsEntries(c.savingsEntries ?? []);
+        setRemittances(c.remittances ?? []);
+        setFullName(c.fullName ?? null);
+        setLoading(false);
+      }
+    } catch {}
+  }, []);
+
   // ── Load everything (re-runnable for realtime + refocus) ──
   const load = useCallback(async () => {
     const {
@@ -73,8 +97,8 @@ export default function Dashboard() {
     if (!user) return;
     setUserId(user.id);
 
-    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }, { data: se }] = await Promise.all([
-      supabase.from("profiles").select("monthly_income, currency, secondary_currency, fx_rate").eq("id", user.id).single(),
+    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }, { data: se }, { data: rm }] = await Promise.all([
+      supabase.from("profiles").select("monthly_income, currency, secondary_currency, fx_rate, full_name").eq("id", user.id).single(),
       supabase.from("budgets").select("*").eq("user_id", user.id),
       supabase
         .from("transactions")
@@ -84,6 +108,7 @@ export default function Dashboard() {
       supabase.from("credits").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("savings_entries").select("*").eq("user_id", user.id).order("month"),
+      supabase.from("remittances").select("*").eq("user_id", user.id).order("sent_on", { ascending: false }),
     ]);
 
     if (profile) {
@@ -91,14 +116,34 @@ export default function Dashboard() {
       setCurrency(profile.currency ?? "USD");
       setSecondary(profile.secondary_currency ?? null);
       setFxRate(profile.fx_rate != null ? Number(profile.fx_rate) : null);
+      setFullName(profile.full_name ?? null);
     }
-    setBudgets((b as Budget[]) ?? []);
-    setTxns((t as Transaction[]) ?? []);
-    setCredits((cr as Credit[]) ?? []);
-    setAccounts((ac as Account[]) ?? []);
-    setSavingsEntries((se as SavingsEntry[]) ?? []);
+    const bx = (b as Budget[]) ?? [];
+    const tx = (t as Transaction[]) ?? [];
+    const crx = (cr as Credit[]) ?? [];
+    const acx = (ac as Account[]) ?? [];
+    const sex = (se as SavingsEntry[]) ?? [];
+    const rmx = (rm as Remittance[]) ?? [];
+    setBudgets(bx);
+    setTxns(tx);
+    setCredits(crx);
+    setAccounts(acx);
+    setSavingsEntries(sex);
+    setRemittances(rmx);
     setLoading(false);
     refreshQueued();
+
+    // Cache a snapshot for the next instant paint.
+    try {
+      localStorage.setItem("buffer.dash", JSON.stringify({
+        income: Number(profile?.monthly_income ?? 0),
+        currency: profile?.currency ?? "USD",
+        secondary: profile?.secondary_currency ?? null,
+        fxRate: profile?.fx_rate != null ? Number(profile.fx_rate) : null,
+        fullName: profile?.full_name ?? null,
+        budgets: bx, txns: tx, credits: crx, accounts: acx, savingsEntries: sex, remittances: rmx,
+      }));
+    } catch {}
   }, [supabase, refreshQueued]);
 
   useEffect(() => {
@@ -138,6 +183,11 @@ export default function Dashboard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "savings_entries", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "remittances", filter: `user_id=eq.${userId}` },
         () => load(),
       )
       .subscribe();
@@ -323,6 +373,17 @@ export default function Dashboard() {
     .filter((e) => e.month.slice(0, 7) === month.slice(0, 7))
     .reduce((s, e) => s + Number(e.amount), 0);
 
+  const remittedThisMonth = remittances
+    .filter((r) => r.sent_on.slice(0, 7) === month.slice(0, 7))
+    .reduce((s, r) => s + Number(r.amount), 0);
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    const part = h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+    const name = (fullName && fullName.trim().split(" ")[0]) || "Wilken";
+    return `${part}, ${name}`;
+  })();
+
   const topCategory = discretionaryCats
     .map((c) => ({ category: c, amount: spentByCategory(txns, c, month) }))
     .sort((a, b) => b.amount - a.amount)[0] ?? null;
@@ -393,6 +454,12 @@ export default function Dashboard() {
         <SetupCard />
       ) : (
         <>
+          {/* Friendly greeting */}
+          <section className="mb-5">
+            <p className="text-sm text-neutral-500">{greeting}</p>
+            <h1 className="text-lg font-semibold text-neutral-100">Here&rsquo;s where your money stands</h1>
+          </section>
+
           {/* Safe-to-spend gauge (hero) */}
           <section className="mb-6 rounded-3xl border border-neutral-900 bg-neutral-950 py-6">
             <SafeToSpendGauge
@@ -444,6 +511,23 @@ export default function Dashboard() {
               </div>
               <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{savingsFmt(allTimeSaved)}</p>
               <p className="text-[11px] text-neutral-500">total saved</p>
+            </Link>
+          </section>
+
+          {/* Remittance quick access */}
+          <section className="mb-8">
+            <Link
+              href="/remittance"
+              className="flex items-center gap-3 rounded-2xl border border-neutral-900 bg-neutral-950 p-4 transition active:scale-[0.99]"
+            >
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-400">
+                <Send className="h-5 w-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-neutral-400">Remittance sent this month</p>
+                <p className="truncate text-xl font-bold tabular-nums text-sky-400">{fmt(remittedThisMonth)}</p>
+              </div>
+              <ChevronRight className="h-5 w-5 shrink-0 text-neutral-600" />
             </Link>
           </section>
 

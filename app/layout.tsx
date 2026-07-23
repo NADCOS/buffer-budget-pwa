@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { SplashScreen } from "@/components/SplashScreen";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -41,6 +42,7 @@ export default function RootLayout({
     <html lang="en" className={`${inter.variable} dark`} suppressHydrationWarning>
       <body className="min-h-[100dvh] bg-black font-sans text-white antialiased">
         {children}
+        <SplashScreen />
         <ServiceWorkerRegister />
       </body>
     </html>
