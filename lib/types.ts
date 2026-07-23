@@ -17,6 +17,7 @@ export interface Profile {
   email: string | null;
   full_name: string | null;
   currency: string;
+  secondary_currency: string | null;
   monthly_income: number;
 }
 

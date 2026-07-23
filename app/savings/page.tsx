@@ -6,6 +6,7 @@ import { ArrowLeft, Plus, Trash2, PiggyBank, TrendingUp } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { MoneyInput } from "@/components/MoneyInput";
 import { SavingsChart } from "@/components/SavingsChart";
+import { fetchRate } from "@/lib/fx";
 import { firstOfMonth } from "@/lib/budget";
 import type { Account, SavingsEntry } from "@/lib/types";
 
@@ -19,6 +20,8 @@ export default function SavingsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [userId, setUserId] = useState<string | null>(null);
   const [currency, setCurrency] = useState("USD");
+  const [secondary, setSecondary] = useState("");
+  const [rate, setRate] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<SavingsEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,17 +31,26 @@ export default function SavingsPage() {
     if (!user) return;
     setUserId(user.id);
     const [{ data: profile }, { data: acc }, { data: ent }] = await Promise.all([
-      supabase.from("profiles").select("currency").eq("id", user.id).single(),
+      supabase.from("profiles").select("currency, secondary_currency").eq("id", user.id).single(),
       supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("savings_entries").select("*").eq("user_id", user.id).order("month"),
     ]);
     if (profile?.currency) setCurrency(profile.currency);
+    setSecondary(profile?.secondary_currency ?? "");
     setAccounts((acc as Account[]) ?? []);
     setEntries((ent as SavingsEntry[]) ?? []);
     setLoading(false);
   }, [supabase]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Fetch the live exchange rate for the secondary display currency.
+  useEffect(() => {
+    if (!secondary || secondary === currency) { setRate(secondary === currency ? 1 : null); return; }
+    let alive = true;
+    fetchRate(currency, secondary).then((r) => { if (alive) setRate(r); });
+    return () => { alive = false; };
+  }, [currency, secondary]);
 
   useEffect(() => {
     if (!userId) return;
@@ -52,6 +64,9 @@ export default function SavingsPage() {
 
   const fmt = (n: number) =>
     new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
+  const fmt2 = (n: number) =>
+    new Intl.NumberFormat(undefined, { style: "currency", currency: secondary || "USD", maximumFractionDigits: 0 }).format(n);
+  const showSecondary = !!secondary && secondary !== currency && rate != null;
 
   // ── Accounts (current balances) ───────────────────────────
   async function addAccount() {
@@ -124,6 +139,11 @@ export default function SavingsPage() {
         </div>
         <p className="text-xs uppercase tracking-wide text-neutral-500">Total balance</p>
         <p className="mt-1 text-4xl font-bold tabular-nums text-emerald-400">{fmt(totalBalance)}</p>
+        {showSecondary && (
+          <p className="mt-1 text-sm font-medium tabular-nums text-neutral-400">
+            ≈ {fmt2(totalBalance * (rate as number))} {secondary}
+          </p>
+        )}
         <p className="mt-1 text-xs text-neutral-500">
           across {accounts.length} {accounts.length === 1 ? "account" : "accounts"}
         </p>
@@ -171,6 +191,11 @@ export default function SavingsPage() {
               {fmt(totalContrib)} all-time
             </span>
           </div>
+          {showSecondary && totalContrib > 0 && (
+            <p className="-mt-1 mb-3 text-right text-xs text-neutral-500">
+              ≈ {fmt2(totalContrib * (rate as number))} {secondary}
+            </p>
+          )}
 
           {points.length > 0 ? (
             <div className="mb-4 rounded-2xl border border-neutral-900 bg-neutral-950 p-4">

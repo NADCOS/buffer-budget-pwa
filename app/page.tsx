@@ -15,10 +15,12 @@ import {
   Receipt,
   CreditCard,
   PiggyBank,
+  Sparkles,
+  Lightbulb,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
-import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Transaction, type Credit, type Account } from "@/lib/types";
+import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Transaction, type Credit, type Account, type SavingsEntry } from "@/lib/types";
 import {
   computeSummary,
   firstOfMonth,
@@ -33,6 +35,7 @@ import { SafeToSpendGauge } from "@/components/SafeToSpendGauge";
 import { EnvelopeCard } from "@/components/EnvelopeCard";
 import { TransactionRow } from "@/components/TransactionRow";
 import { QuickAddModal, type TxnDraft } from "@/components/QuickAddModal";
+import { dailyQuote, buildInsights } from "@/lib/insights";
 
 export default function Dashboard() {
   const supabase = useMemo(() => createClient(), []);
@@ -43,6 +46,7 @@ export default function Dashboard() {
   const [txns, setTxns] = useState<Transaction[]>([]);
   const [credits, setCredits] = useState<Credit[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [online, setOnline] = useState(true);
@@ -63,7 +67,7 @@ export default function Dashboard() {
     if (!user) return;
     setUserId(user.id);
 
-    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }] = await Promise.all([
+    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }, { data: se }] = await Promise.all([
       supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
       supabase.from("budgets").select("*").eq("user_id", user.id),
       supabase
@@ -73,6 +77,7 @@ export default function Dashboard() {
         .order("occurred_on", { ascending: false }),
       supabase.from("credits").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
+      supabase.from("savings_entries").select("*").eq("user_id", user.id).order("month"),
     ]);
 
     if (profile) {
@@ -83,6 +88,7 @@ export default function Dashboard() {
     setTxns((t as Transaction[]) ?? []);
     setCredits((cr as Credit[]) ?? []);
     setAccounts((ac as Account[]) ?? []);
+    setSavingsEntries((se as SavingsEntry[]) ?? []);
     setLoading(false);
     refreshQueued();
   }, [supabase, refreshQueued]);
@@ -119,6 +125,11 @@ export default function Dashboard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "accounts", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "savings_entries", filter: `user_id=eq.${userId}` },
         () => load(),
       )
       .subscribe();
@@ -271,6 +282,33 @@ export default function Dashboard() {
   );
   const savingsTotal = accounts.reduce((s, a) => s + Number(a.balance), 0);
 
+  const savedThisMonth = savingsEntries
+    .filter((e) => e.month.slice(0, 7) === month.slice(0, 7))
+    .reduce((s, e) => s + Number(e.amount), 0);
+
+  const topCategory = discretionaryCats
+    .map((c) => ({ category: c, amount: spentByCategory(txns, c, month) }))
+    .sort((a, b) => b.amount - a.amount)[0] ?? null;
+
+  const overspent = envelopes
+    .map(({ cat, limit }) => ({ category: cat, over: spentByCategory(txns, cat, month) - limit }))
+    .filter((o) => o.over > 0);
+
+  const quote = dailyQuote();
+  const insights = buildInsights({
+    income: summary.income,
+    savedThisMonth,
+    savingsTotal,
+    creditsRemaining,
+    hasCredits: credits.length > 0,
+    safeToSpendDaily: summary.safeToSpendDaily,
+    discretionarySpent: summary.discretionarySpent,
+    discretionaryBudget: summary.discretionaryBudget,
+    topCategory,
+    overspent,
+    fmt,
+  });
+
   return (
     <main className="mx-auto min-h-[100dvh] max-w-md px-5 pb-32 pt-[calc(env(safe-area-inset-top)+1.5rem)]">
       {/* Header: month switcher + connection + settings */}
@@ -365,6 +403,27 @@ export default function Dashboard() {
               <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{fmt(savingsTotal)}</p>
               <p className="text-[11px] text-neutral-500">total saved</p>
             </Link>
+          </section>
+
+          {/* Daily motivation + insights */}
+          <section className="mb-8">
+            <div className="mb-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4">
+              <div className="flex items-center gap-1.5 text-emerald-400">
+                <Sparkles className="h-3.5 w-3.5" />
+                <span className="text-[11px] font-semibold uppercase tracking-wide">Today</span>
+              </div>
+              <p className="mt-1.5 text-sm text-neutral-100 [text-wrap:pretty]">{quote}</p>
+            </div>
+            {insights.length > 0 && (
+              <div className="grid gap-2">
+                {insights.slice(0, 3).map((t, idx) => (
+                  <div key={idx} className="flex items-start gap-2.5 rounded-xl border border-neutral-900 bg-neutral-950 p-3">
+                    <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
+                    <span className="text-xs leading-relaxed text-neutral-300">{t}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
 
           {/* Envelopes */}

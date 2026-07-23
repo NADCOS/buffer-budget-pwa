@@ -18,6 +18,7 @@ export default function SettingsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [income, setIncome] = useState("");
   const [currency, setCurrency] = useState("USD");
+  const [secondary, setSecondary] = useState("");
   const [limits, setLimits] = useState<Record<Category, string>>(
     () => Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>,
   );
@@ -31,13 +32,14 @@ export default function SettingsPage() {
       setUserId(user.id);
 
       const [{ data: profile }, { data: budgets }] = await Promise.all([
-        supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
+        supabase.from("profiles").select("monthly_income, currency, secondary_currency").eq("id", user.id).single(),
         supabase.from("budgets").select("*").eq("user_id", user.id).eq("month", month),
       ]);
 
       if (profile) {
         setIncome(String(profile.monthly_income ?? ""));
         setCurrency(profile.currency ?? "USD");
+        setSecondary(profile.secondary_currency ?? "");
       }
       const map = Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>;
       (budgets as Budget[] | null)?.forEach((b) => {
@@ -53,13 +55,16 @@ export default function SettingsPage() {
     if (!userId) return;
     setStatus("saving");
 
+    // 1) Profile (income + currency)
     await supabase.from("profiles").upsert({
       id: userId,
       monthly_income: parseFloat(income) || 0,
       currency,
+      secondary_currency: secondary || null,
       updated_at: new Date().toISOString(),
     });
 
+    // 2) One budget row per category for this month
     const rows = CATEGORIES.map((c) => ({
       user_id: userId,
       category: c,
@@ -101,6 +106,7 @@ export default function SettingsPage() {
         </div>
       ) : (
         <form onSubmit={save} className="space-y-8">
+          {/* Income */}
           <section>
             <h2 className="mb-3 text-sm font-semibold text-neutral-400">Income</h2>
             <div className="space-y-3">
@@ -125,9 +131,28 @@ export default function SettingsPage() {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-neutral-500">
+                  Also show savings in
+                </label>
+                <select
+                  value={secondary}
+                  onChange={(e) => setSecondary(e.target.value)}
+                  className={inputCls}
+                >
+                  <option value="">Off</option>
+                  {CURRENCIES.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-neutral-500">
+                  Adds a converted total on the Savings screen (live exchange rate).
+                </p>
+              </div>
             </div>
           </section>
 
+          {/* Envelopes */}
           <section>
             <h2 className="mb-1 text-sm font-semibold text-neutral-400">Monthly budgets</h2>
             <p className="mb-3 text-xs text-neutral-500">
