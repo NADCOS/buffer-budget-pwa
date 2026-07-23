@@ -13,10 +13,12 @@ import {
   ChevronLeft,
   ChevronRight,
   Receipt,
+  CreditCard,
+  PiggyBank,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { outbox } from "@/lib/offline-queue";
-import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Transaction } from "@/lib/types";
+import { CATEGORIES, FIXED_CATEGORIES, type Budget, type Transaction, type Credit, type Account } from "@/lib/types";
 import {
   computeSummary,
   firstOfMonth,
@@ -39,6 +41,8 @@ export default function Dashboard() {
   const [currency, setCurrency] = useState("USD");
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [txns, setTxns] = useState<Transaction[]>([]);
+  const [credits, setCredits] = useState<Credit[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [online, setOnline] = useState(true);
@@ -59,7 +63,7 @@ export default function Dashboard() {
     if (!user) return;
     setUserId(user.id);
 
-    const [{ data: profile }, { data: b }, { data: t }] = await Promise.all([
+    const [{ data: profile }, { data: b }, { data: t }, { data: cr }, { data: ac }] = await Promise.all([
       supabase.from("profiles").select("monthly_income, currency").eq("id", user.id).single(),
       supabase.from("budgets").select("*").eq("user_id", user.id),
       supabase
@@ -67,6 +71,8 @@ export default function Dashboard() {
         .select("*")
         .eq("user_id", user.id)
         .order("occurred_on", { ascending: false }),
+      supabase.from("credits").select("*").eq("user_id", user.id).order("created_at"),
+      supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
     ]);
 
     if (profile) {
@@ -75,6 +81,8 @@ export default function Dashboard() {
     }
     setBudgets((b as Budget[]) ?? []);
     setTxns((t as Transaction[]) ?? []);
+    setCredits((cr as Credit[]) ?? []);
+    setAccounts((ac as Account[]) ?? []);
     setLoading(false);
     refreshQueued();
   }, [supabase, refreshQueued]);
@@ -101,6 +109,16 @@ export default function Dashboard() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "profiles", filter: `id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "credits", filter: `user_id=eq.${userId}` },
+        () => load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "accounts", filter: `user_id=eq.${userId}` },
         () => load(),
       )
       .subscribe();
@@ -247,6 +265,12 @@ export default function Dashboard() {
 
   const needsSetup = !loading && income === 0 && budgets.length === 0;
 
+  const creditsRemaining = credits.reduce(
+    (s, c) => s + Math.max(0, Number(c.total_amount) - Number(c.paid_amount)),
+    0,
+  );
+  const savingsTotal = accounts.reduce((s, a) => s + Number(a.balance), 0);
+
   return (
     <main className="mx-auto min-h-[100dvh] max-w-md px-5 pb-32 pt-[calc(env(safe-area-inset-top)+1.5rem)]">
       {/* Header: month switcher + connection + settings */}
@@ -315,6 +339,32 @@ export default function Dashboard() {
             <Stat icon={Wallet} label="Balance" value={fmt(summary.balance)} tone="text-neutral-100" />
             <Stat icon={TrendingUp} label="Income" value={fmt(summary.income)} tone="text-emerald-400" />
             <Stat icon={TrendingDown} label="Spent" value={fmt(summary.discretionarySpent)} tone="text-sky-400" />
+          </section>
+
+          {/* Credits + savings quick access */}
+          <section className="mb-8 grid grid-cols-2 gap-3">
+            <Link
+              href="/credits"
+              className="rounded-2xl border border-neutral-900 bg-neutral-950 p-4 transition active:scale-[0.98]"
+            >
+              <div className="flex items-center gap-1.5 text-neutral-400">
+                <CreditCard className="h-4 w-4" />
+                <span className="text-xs font-medium">Online credits</span>
+              </div>
+              <p className="mt-2 truncate text-xl font-bold tabular-nums text-red-400">{fmt(creditsRemaining)}</p>
+              <p className="text-[11px] text-neutral-500">left to pay</p>
+            </Link>
+            <Link
+              href="/savings"
+              className="rounded-2xl border border-neutral-900 bg-neutral-950 p-4 transition active:scale-[0.98]"
+            >
+              <div className="flex items-center gap-1.5 text-neutral-400">
+                <PiggyBank className="h-4 w-4" />
+                <span className="text-xs font-medium">Savings</span>
+              </div>
+              <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{fmt(savingsTotal)}</p>
+              <p className="text-[11px] text-neutral-500">total saved</p>
+            </Link>
           </section>
 
           {/* Envelopes */}

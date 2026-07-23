@@ -41,3 +41,22 @@ export interface Transaction {
   /** UI-only: set on optimistic rows that have not confirmed with the server. */
   pending?: boolean;
 }
+
+/** An online credit / installment debt being paid off over time. */
+export interface Credit {
+  id: string;
+  user_id: string;
+  name: string;
+  total_amount: number;
+  paid_amount: number;
+  created_at?: string;
+}
+
+/** A bank / savings account with an editable balance. */
+export interface Account {
+  id: string;
+  user_id: string;
+  name: string;
+  balance: number;
+  created_at?: string;
+}
