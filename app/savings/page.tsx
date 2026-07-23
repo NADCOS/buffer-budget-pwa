@@ -22,6 +22,7 @@ export default function SavingsPage() {
   const [currency, setCurrency] = useState("USD");
   const [secondary, setSecondary] = useState("");
   const [rate, setRate] = useState<number | null>(null);
+  const [manualRate, setManualRate] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<SavingsEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,12 +32,13 @@ export default function SavingsPage() {
     if (!user) return;
     setUserId(user.id);
     const [{ data: profile }, { data: acc }, { data: ent }] = await Promise.all([
-      supabase.from("profiles").select("currency, secondary_currency").eq("id", user.id).single(),
+      supabase.from("profiles").select("currency, secondary_currency, fx_rate").eq("id", user.id).single(),
       supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("savings_entries").select("*").eq("user_id", user.id).order("month"),
     ]);
     if (profile?.currency) setCurrency(profile.currency);
     setSecondary(profile?.secondary_currency ?? "");
+    setManualRate(profile?.fx_rate ? Number(profile.fx_rate) : null);
     setAccounts((acc as Account[]) ?? []);
     setEntries((ent as SavingsEntry[]) ?? []);
     setLoading(false);
@@ -44,13 +46,14 @@ export default function SavingsPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Fetch the live exchange rate for the secondary display currency.
+  // Rate: use the manual rate if set, otherwise fetch live.
   useEffect(() => {
     if (!secondary || secondary === currency) { setRate(secondary === currency ? 1 : null); return; }
+    if (manualRate && manualRate > 0) { setRate(manualRate); return; }
     let alive = true;
     fetchRate(currency, secondary).then((r) => { if (alive) setRate(r); });
     return () => { alive = false; };
-  }, [currency, secondary]);
+  }, [currency, secondary, manualRate]);
 
   useEffect(() => {
     if (!userId) return;
@@ -132,20 +135,26 @@ export default function SavingsPage() {
         <h1 className="text-xl font-semibold">Savings</h1>
       </header>
 
-      {/* Total across accounts */}
+      {/* Total saved (reflects both the monthly log and bank balances) */}
       <section className="mb-8 rounded-3xl border border-neutral-900 bg-neutral-950 p-6 text-center">
         <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
           <PiggyBank className="h-5 w-5" />
         </div>
-        <p className="text-xs uppercase tracking-wide text-neutral-500">Total balance</p>
-        <p className="mt-1 text-4xl font-bold tabular-nums text-emerald-400">{fmt(totalBalance)}</p>
+        <p className="text-xs uppercase tracking-wide text-neutral-500">Total saved</p>
+        <p className="mt-1 text-4xl font-bold tabular-nums text-emerald-400">{fmt(totalContrib)}</p>
         {showSecondary && (
           <p className="mt-1 text-sm font-medium tabular-nums text-neutral-400">
-            ≈ {fmt2(totalBalance * (rate as number))} {secondary}
+            ≈ {fmt2(totalContrib * (rate as number))} {secondary}
           </p>
         )}
-        <p className="mt-1 text-xs text-neutral-500">
-          across {accounts.length} {accounts.length === 1 ? "account" : "accounts"}
+        {showSecondary && (
+          <p className="mt-1 text-[11px] text-neutral-600">
+            1 {currency} = {new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(rate as number)} {secondary}
+            {manualRate ? " · manual" : " · live"}
+          </p>
+        )}
+        <p className="mt-2 text-xs text-neutral-500">
+          {fmt(totalBalance)} held across {accounts.length} bank {accounts.length === 1 ? "account" : "accounts"}
         </p>
       </section>
 

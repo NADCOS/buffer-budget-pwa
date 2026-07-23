@@ -18,6 +18,7 @@ export interface Profile {
   full_name: string | null;
   currency: string;
   secondary_currency: string | null;
+  fx_rate: number | null;
   monthly_income: number;
 }
 

@@ -281,6 +281,7 @@ export default function Dashboard() {
     0,
   );
   const savingsTotal = accounts.reduce((s, a) => s + Number(a.balance), 0);
+  const allTimeSaved = savingsEntries.reduce((s, e) => s + Number(e.amount), 0);
 
   const savedThisMonth = savingsEntries
     .filter((e) => e.month.slice(0, 7) === month.slice(0, 7))
@@ -400,7 +401,7 @@ export default function Dashboard() {
                 <PiggyBank className="h-4 w-4" />
                 <span className="text-xs font-medium">Savings</span>
               </div>
-              <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{fmt(savingsTotal)}</p>
+              <p className="mt-2 truncate text-xl font-bold tabular-nums text-emerald-400">{fmt(allTimeSaved)}</p>
               <p className="text-[11px] text-neutral-500">total saved</p>
             </Link>
           </section>

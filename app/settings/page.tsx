@@ -19,6 +19,7 @@ export default function SettingsPage() {
   const [income, setIncome] = useState("");
   const [currency, setCurrency] = useState("USD");
   const [secondary, setSecondary] = useState("");
+  const [fxRate, setFxRate] = useState("");
   const [limits, setLimits] = useState<Record<Category, string>>(
     () => Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>,
   );
@@ -32,7 +33,7 @@ export default function SettingsPage() {
       setUserId(user.id);
 
       const [{ data: profile }, { data: budgets }] = await Promise.all([
-        supabase.from("profiles").select("monthly_income, currency, secondary_currency").eq("id", user.id).single(),
+        supabase.from("profiles").select("monthly_income, currency, secondary_currency, fx_rate").eq("id", user.id).single(),
         supabase.from("budgets").select("*").eq("user_id", user.id).eq("month", month),
       ]);
 
@@ -40,6 +41,7 @@ export default function SettingsPage() {
         setIncome(String(profile.monthly_income ?? ""));
         setCurrency(profile.currency ?? "USD");
         setSecondary(profile.secondary_currency ?? "");
+        setFxRate(profile.fx_rate ? String(profile.fx_rate) : "");
       }
       const map = Object.fromEntries(CATEGORIES.map((c) => [c, ""])) as Record<Category, string>;
       (budgets as Budget[] | null)?.forEach((b) => {
@@ -61,6 +63,7 @@ export default function SettingsPage() {
       monthly_income: parseFloat(income) || 0,
       currency,
       secondary_currency: secondary || null,
+      fx_rate: fxRate ? parseFloat(fxRate) : null,
       updated_at: new Date().toISOString(),
     });
 
@@ -149,6 +152,23 @@ export default function SettingsPage() {
                   Adds a converted total on the Savings screen (live exchange rate).
                 </p>
               </div>
+              {secondary && secondary !== currency && (
+                <div>
+                  <label className="mb-1.5 block text-xs text-neutral-500">
+                    Exchange rate — 1 {currency} = ? {secondary} (optional)
+                  </label>
+                  <input
+                    type="number" inputMode="decimal" step="0.0001" min="0"
+                    placeholder="Leave blank for live rate"
+                    value={fxRate}
+                    onChange={(e) => setFxRate(e.target.value)}
+                    className={inputCls}
+                  />
+                  <p className="mt-1.5 text-xs text-neutral-500">
+                    Set this to pin an exact daily rate; clear it to use the live rate.
+                  </p>
+                </div>
+              )}
             </div>
           </section>
 
