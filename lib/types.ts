@@ -60,3 +60,13 @@ export interface Account {
   balance: number;
   created_at?: string;
 }
+
+/** A logged monthly savings contribution (drives the growth chart). */
+export interface SavingsEntry {
+  id: string;
+  user_id: string;
+  month: string; // ISO date (1st of month)
+  amount: number;
+  note: string | null;
+  created_at?: string;
+}
