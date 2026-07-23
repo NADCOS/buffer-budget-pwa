@@ -9,6 +9,9 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
+/** Savings are always tracked in Philippine pesos, regardless of budget currency. */
+export const SAVINGS_CURRENCY = "PHP";
+
 /** Categories that are recurring/fixed rather than discretionary. */
 export const FIXED_CATEGORIES: Category[] = ["Rent", "Utilities"];
 

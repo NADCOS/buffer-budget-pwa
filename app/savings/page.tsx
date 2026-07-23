@@ -6,9 +6,8 @@ import { ArrowLeft, Plus, Trash2, PiggyBank, TrendingUp } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { MoneyInput } from "@/components/MoneyInput";
 import { SavingsChart } from "@/components/SavingsChart";
-import { fetchRate } from "@/lib/fx";
 import { firstOfMonth } from "@/lib/budget";
-import type { Account, SavingsEntry } from "@/lib/types";
+import { SAVINGS_CURRENCY, type Account, type SavingsEntry } from "@/lib/types";
 
 const shortMonth = (iso: string) =>
   new Date(iso.slice(0, 7) + "-01T00:00:00").toLocaleDateString(undefined, {
@@ -19,10 +18,6 @@ const shortMonth = (iso: string) =>
 export default function SavingsPage() {
   const supabase = useMemo(() => createClient(), []);
   const [userId, setUserId] = useState<string | null>(null);
-  const [currency, setCurrency] = useState("USD");
-  const [secondary, setSecondary] = useState("");
-  const [rate, setRate] = useState<number | null>(null);
-  const [manualRate, setManualRate] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<SavingsEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,29 +26,16 @@ export default function SavingsPage() {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
     setUserId(user.id);
-    const [{ data: profile }, { data: acc }, { data: ent }] = await Promise.all([
-      supabase.from("profiles").select("currency, secondary_currency, fx_rate").eq("id", user.id).single(),
+    const [{ data: acc }, { data: ent }] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", user.id).order("created_at"),
       supabase.from("savings_entries").select("*").eq("user_id", user.id).order("month"),
     ]);
-    if (profile?.currency) setCurrency(profile.currency);
-    setSecondary(profile?.secondary_currency ?? "");
-    setManualRate(profile?.fx_rate ? Number(profile.fx_rate) : null);
     setAccounts((acc as Account[]) ?? []);
     setEntries((ent as SavingsEntry[]) ?? []);
     setLoading(false);
   }, [supabase]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Rate: use the manual rate if set, otherwise fetch live.
-  useEffect(() => {
-    if (!secondary || secondary === currency) { setRate(secondary === currency ? 1 : null); return; }
-    if (manualRate && manualRate > 0) { setRate(manualRate); return; }
-    let alive = true;
-    fetchRate(currency, secondary).then((r) => { if (alive) setRate(r); });
-    return () => { alive = false; };
-  }, [currency, secondary, manualRate]);
 
   useEffect(() => {
     if (!userId) return;
@@ -65,11 +47,9 @@ export default function SavingsPage() {
     return () => { supabase.removeChannel(ch); };
   }, [supabase, userId, load]);
 
+  // Savings are always shown in Philippine pesos.
   const fmt = (n: number) =>
-    new Intl.NumberFormat(undefined, { style: "currency", currency, maximumFractionDigits: 0 }).format(n);
-  const fmt2 = (n: number) =>
-    new Intl.NumberFormat(undefined, { style: "currency", currency: secondary || "USD", maximumFractionDigits: 0 }).format(n);
-  const showSecondary = !!secondary && secondary !== currency && rate != null;
+    new Intl.NumberFormat("en-PH", { style: "currency", currency: SAVINGS_CURRENCY, maximumFractionDigits: 0 }).format(n);
 
   // ── Accounts (current balances) ───────────────────────────
   async function addAccount() {
@@ -135,24 +115,13 @@ export default function SavingsPage() {
         <h1 className="text-xl font-semibold">Savings</h1>
       </header>
 
-      {/* Total saved (reflects both the monthly log and bank balances) */}
+      {/* Total saved — all amounts in Philippine pesos */}
       <section className="mb-8 rounded-3xl border border-neutral-900 bg-neutral-950 p-6 text-center">
         <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
           <PiggyBank className="h-5 w-5" />
         </div>
         <p className="text-xs uppercase tracking-wide text-neutral-500">Total saved</p>
         <p className="mt-1 text-4xl font-bold tabular-nums text-emerald-400">{fmt(totalContrib)}</p>
-        {showSecondary && (
-          <p className="mt-1 text-sm font-medium tabular-nums text-neutral-400">
-            ≈ {fmt2(totalContrib * (rate as number))} {secondary}
-          </p>
-        )}
-        {showSecondary && (
-          <p className="mt-1 text-[11px] text-neutral-600">
-            1 {currency} = {new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(rate as number)} {secondary}
-            {manualRate ? " · manual" : " · live"}
-          </p>
-        )}
         <p className="mt-2 text-xs text-neutral-500">
           {fmt(totalBalance)} held across {accounts.length} bank {accounts.length === 1 ? "account" : "accounts"}
         </p>
@@ -166,14 +135,14 @@ export default function SavingsPage() {
         <>
           {/* Bank accounts */}
           <h2 className="mb-1 text-sm font-semibold text-neutral-400">Bank accounts</h2>
-          <p className="mb-3 text-xs text-neutral-500">Edit a balance whenever you deposit or withdraw.</p>
+          <p className="mb-3 text-xs text-neutral-500">All balances are in pesos (₱). Edit whenever you deposit or withdraw.</p>
           <div className="mb-8 grid gap-3">
             {accounts.map((a) => (
               <div key={a.id} className="rounded-2xl border border-neutral-900 bg-neutral-900/60 p-4">
                 <div className="mb-3 flex items-center gap-2">
                   <input
                     defaultValue={a.name}
-                    placeholder="Account name (e.g. Al Rajhi, Cash)"
+                    placeholder="Account name (e.g. GCash, BPI, Cash)"
                     onBlur={(e) => e.target.value !== a.name && patchAccount(a.id, { name: e.target.value })}
                     className="h-9 flex-1 rounded-lg bg-transparent px-1 text-base font-medium outline-none placeholder:text-neutral-600 focus:bg-neutral-900"
                   />
@@ -182,7 +151,7 @@ export default function SavingsPage() {
                   </button>
                 </div>
                 <label className="block">
-                  <span className="mb-1 block text-xs text-neutral-500">Balance</span>
+                  <span className="mb-1 block text-xs text-neutral-500">Balance (₱)</span>
                   <MoneyInput value={Number(a.balance)} onCommit={(n) => patchAccount(a.id, { balance: n })} className={inputCls} />
                 </label>
               </div>
@@ -200,11 +169,6 @@ export default function SavingsPage() {
               {fmt(totalContrib)} all-time
             </span>
           </div>
-          {showSecondary && totalContrib > 0 && (
-            <p className="-mt-1 mb-3 text-right text-xs text-neutral-500">
-              ≈ {fmt2(totalContrib * (rate as number))} {secondary}
-            </p>
-          )}
 
           {points.length > 0 ? (
             <div className="mb-4 rounded-2xl border border-neutral-900 bg-neutral-950 p-4">
@@ -238,7 +202,7 @@ export default function SavingsPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <label className="block">
-                    <span className="mb-1 block text-xs text-neutral-500">Saved this month</span>
+                    <span className="mb-1 block text-xs text-neutral-500">Saved this month (₱)</span>
                     <MoneyInput value={Number(e.amount)} onCommit={(n) => patchEntry(e.id, { amount: n })} className={inputCls} />
                   </label>
                   <label className="block">
