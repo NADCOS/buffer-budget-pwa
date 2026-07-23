@@ -21,6 +21,7 @@ export default function SavingsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [entries, setEntries] = useState<SavingsEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -54,7 +55,9 @@ export default function SavingsPage() {
   // ── Accounts (current balances) ───────────────────────────
   async function addAccount() {
     if (!userId) return;
-    const { data } = await supabase.from("accounts").insert({ user_id: userId, name: "", balance: 0 }).select().single();
+    setErr(null);
+    const { data, error } = await supabase.from("accounts").insert({ user_id: userId, name: "", balance: 0 }).select().single();
+    if (error) { setErr(error.message + " — run supabase/setup_all.sql in the Supabase SQL Editor."); return; }
     if (data) setAccounts((prev) => [...prev, data as Account]);
   }
   async function patchAccount(id: string, fields: Partial<Account>) {
@@ -69,11 +72,13 @@ export default function SavingsPage() {
   // ── Monthly contributions (growth history) ────────────────
   async function addEntry() {
     if (!userId) return;
-    const { data } = await supabase
+    setErr(null);
+    const { data, error } = await supabase
       .from("savings_entries")
       .insert({ user_id: userId, month: firstOfMonth(), amount: 0, note: null })
       .select()
       .single();
+    if (error) { setErr(error.message + " — run supabase/setup_all.sql in the Supabase SQL Editor."); return; }
     if (data) setEntries((prev) => [...prev, data as SavingsEntry]);
   }
   async function patchEntry(id: string, fields: Partial<SavingsEntry>) {
@@ -133,6 +138,11 @@ export default function SavingsPage() {
         </div>
       ) : (
         <>
+          {err && (
+            <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+              {err}
+            </div>
+          )}
           {/* Bank accounts */}
           <h2 className="mb-1 text-sm font-semibold text-neutral-400">Bank accounts</h2>
           <p className="mb-3 text-xs text-neutral-500">All balances are in pesos (₱). Edit whenever you deposit or withdraw.</p>
