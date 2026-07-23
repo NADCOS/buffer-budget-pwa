@@ -36,11 +36,13 @@ function currencySymbol(currency: string): string {
   }
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const isoDate = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const today = () => isoDate(new Date());
 const yesterday = () => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return isoDate(d);
 };
 const buzz = () => {
   if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(8);
